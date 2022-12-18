@@ -34,9 +34,7 @@ return type modification:
 
 ```
 
-
-
-
+<br>
 Add destructor for safe socket closing
 
 ```c++
@@ -53,7 +51,7 @@ int is_valid_fd(int fd)
 }
 
 ```
-
+<br>
 send function send packet immediately, so in the poll function, select does not use write fd
 
 ```c++
@@ -90,6 +88,7 @@ while (txbuf.size()) {
 */
 
 ```
+<br>
 
 The senddata function sends the packet immediately and return the sent bytes.
 ```c++
@@ -138,7 +137,7 @@ The senddata function sends the packet immediately and return the sent bytes.
 
 ```
 
-
+<br>
 
 The close function immediately closes the socket after sending an close frame to the server.
 ```c++
