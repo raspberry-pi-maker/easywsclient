@@ -1,76 +1,41 @@
 easywsclient
 ============
 
-Easywsclient is an easy and powerful WebSocket client to get your
-C++ code connected to a web stack right away. It depends only on the
-standard libraries.  It is compatible with modern C++11 std::function and
-[lambda](http://en.wikipedia.org/wiki/Anonymous_function#C.2B.2B),
-if they're available (it's not required though).  [RFC
-6455](http://tools.ietf.org/html/rfc6455) Version 13 WebSocket is
-supported. Version 13 is compatible with all major, modern WebSocket
-implementations, including Node.js, and has been a standard since
-December 2011.
+It was copied from https://github.com/dhbaird/easywsclient.
+Detailed introduction and usage can be found on the above site.
 
-Rationale: This library is intended to help a C++ project start using
-WebSocket rapidly. This small library can easily be thrown into an
-existing project. For complicated builds that you can't figure out right
-away, you can even cheat by piggy-backing the .cpp file into one of
-the project's existing files. Yes, WebSocket is that awesome enough to
-warrant getting it integrated into your project!  This project imposes
-no special interface requirements, and can work happily with new C++11
-features or with older C++ projects.
+David Baird's easywsclient is a good code, but from my experience it needs some improvement.
 
-As an additional benefit, easywsclient is very simple, with just a single
-implementation file. It can serve as a cruft-free concise reference. You
-are most welcome to use this code as a reference for creating alternative
-implementations that may better suit your needs.
+- Functions such as Send and SendBinary that send data are void types. It is recommended that these functions be returned as many bytes as sent.
+- The sending function send does not need to be asynchronous.
+- Finally, the close function does not close the socket. It only sends a packet to the server to terminate the websocket. Therefore, if you clear the websocet locally before shutting down on the server, the socket does not close. Therefore, if the socket is not closed in the destructor, it is recommended to close it.
 
-News
-====
+<br>
 
-*2014-12-06*
-Binary frames now supported. Closes issue #38.  Automated integration testing
-is now supported by running `make test`. The test suite expects GoogleTest to
-be installed at `/usr/src/gtest` (`apt-get install libgtest-dev` does the
-trick). The test suite uses C++14 (for lambda capture expressions), and thus it
-will not work on older compilers. Note that easywsclient itself still
-restricted to C++98/C++03, and will continue to build with older compilers.
-
-
-
-Usage
+Modification
 =====
 
-The WebSocket class interface looks like this:
+return type modification:
 
 ```c++
-// Factory method to create a WebSocket:
-static pointer from_url(std::string url);
-// Factory method to create a dummy WebSocket (all operations are noop):
-static pointer create_dummy();
+    // Original return type(void)
+    void poll(int timeout = 0);
+    void send(const std::string& message);
+    void sendBinary(const std::string& message);
+    void sendBinary(const std::vector<uint8_t>& message);
+    void sendPing();
 
-// Function to perform actual network send()/recv() I/O:
-// (note: if all you need is to recv()/dispatch() messages, then a
-// negative timeout can be used to block until a message arrives.
-// By default, when timeout is 0, poll() will not block at all.)
-void poll(int timeout = 0); // timeout in milliseconds
+    // New return type (int) which is the return value of send function
+    int poll(int timeout = 0);
+    int send(const std::string& message);
+    int sendBinary(const std::string& message);
+    int sendBinary(const std::vector<uint8_t>& message);
+    int sendPing();
 
-// Receive a message, and pass it to callable(). Really, this just looks at
-// a buffer (filled up by poll()) and decodes any messages in the buffer.
-// Callable must have signature: void(const std::string & message).
-// Should work with C functions, C++ functors, and C++11 std::function and
-// lambda:
-template<class Callable>
-void dispatch(Callable callable);
-
-// Sends a TEXT type message (gets put into a buffer for poll() to send
-// later):
-void send(std::string message);
-
-// Close the WebSocket (send a CLOSE message over WebSocket, then close() the
-// actual socket when the send buffer becomes empty):
-void close();
 ```
+
+
+
 
 Put together, the usage looks like this:
 

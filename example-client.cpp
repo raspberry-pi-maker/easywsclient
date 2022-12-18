@@ -19,6 +19,7 @@ void handle_message(const std::string & message)
 
 int main()
 {
+    int ret;
 #ifdef _WIN32
     INT rc;
     WSADATA wsaData;
@@ -32,13 +33,22 @@ int main()
 
     ws = WebSocket::from_url("ws://localhost:8126/foo");
     assert(ws);
-    ws->send("goodbye");
-    ws->send("hello");
+    ret = ws->send("goodbye");
+    printf("ws send [%d] bytes\n", ret);
+    ret = ws->send("hello");
+    printf("ws send [%d] bytes\n", ret);
+    int count = 0;
     while (ws->getReadyState() != WebSocket::CLOSED) {
-      ws->poll();
+      ret = ws->poll(1000);
+      count += 1;
+      if(count > 100){
+        ws->close();    
+         break;    //If you want to go out first,
+      }
+      if (!ret) continue;
       ws->dispatch(handle_message);
     }
-    delete ws;
+    delete ws;                  //if you don't close the ws, delete will safely close the socket now.
 #ifdef _WIN32
     WSACleanup();
 #endif

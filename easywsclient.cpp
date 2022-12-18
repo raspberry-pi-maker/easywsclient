@@ -78,6 +78,12 @@
 using easywsclient::Callback_Imp;
 using easywsclient::BytesCallback_Imp;
 
+int is_valid_fd(int fd)
+{
+    return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
+}
+
+
 namespace { // private module-only namespace
 
 socket_t hostname_connect(const std::string& hostname, int port) {
@@ -114,11 +120,11 @@ socket_t hostname_connect(const std::string& hostname, int port) {
 class _DummyWebSocket : public easywsclient::WebSocket
 {
   public:
-    void poll(int timeout) { }
-    void send(const std::string& message) { }
-    void sendBinary(const std::string& message) { }
-    void sendBinary(const std::vector<uint8_t>& message) { }
-    void sendPing() { }
+    int poll(int timeout) { }
+    int send(const std::string& message) { }
+    int sendBinary(const std::string& message) { }
+    int sendBinary(const std::vector<uint8_t>& message) { }
+    int sendPing() { }
     void close() { } 
     readyStateValues getReadyState() const { return CLOSED; }
     void _dispatch(Callback_Imp & callable) { }
@@ -181,12 +187,16 @@ class _RealWebSocket : public easywsclient::WebSocket
             , useMask(useMask)
             , isRxBad(false) {
     }
+    //in the destructor, if socket is opend , close it for preventing resource leakage
+    ~_RealWebSocket(){
+        if(is_valid_fd(sockfd)) closesocket(sockfd);
+    }
 
     readyStateValues getReadyState() const {
       return readyState;
     }
 
-    void poll(int timeout) { // timeout in milliseconds
+    int poll(int timeout) { // timeout in milliseconds
         if (readyState == CLOSED) {
             if (timeout > 0) {
                 timeval tv = { timeout/1000, (timeout%1000) * 1000 };
@@ -194,38 +204,54 @@ class _RealWebSocket : public easywsclient::WebSocket
             }
             return;
         }
+
+        // New Modified code 
+        // I don't use wfds
+
+        int retval = 0;
+
         if (timeout != 0) {
             fd_set rfds;
-            fd_set wfds;
             timeval tv = { timeout/1000, (timeout%1000) * 1000 };
             FD_ZERO(&rfds);
-            FD_ZERO(&wfds);
             FD_SET(sockfd, &rfds);
-            if (txbuf.size()) { FD_SET(sockfd, &wfds); }
-            select(sockfd + 1, &rfds, &wfds, 0, timeout > 0 ? &tv : 0);
+            int ret = select(sockfd + 1, &rfds, NULL, 0, timeout > 0 ? &tv : 0);
+            if(0 == ret){
+                return 0;   //No data to process 
+            }
+            else if(-1 == ret ){    //error
+                return -1;
+            }
+
+
         }
-        while (true) {
-            // FD_ISSET(0, &rfds) will be true
-            int N = rxbuf.size();
-            ssize_t ret;
-            rxbuf.resize(N + 1500);
-            ret = recv(sockfd, (char*)&rxbuf[0] + N, 1500, 0);
-            if (false) { }
-            else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
-                rxbuf.resize(N);
-                break;
-            }
-            else if (ret <= 0) {
-                rxbuf.resize(N);
-                closesocket(sockfd);
-                readyState = CLOSED;
-                fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
-                break;
-            }
-            else {
-                rxbuf.resize(N + ret);
+        if (FD_ISSET(sockfd, &rfds)){
+            while (true) {
+                // FD_ISSET(0, &rfds) will be true
+                int N = rxbuf.size();
+                ssize_t ret;
+                rxbuf.resize(N + 1500);
+                ret = recv(sockfd, (char*)&rxbuf[0] + N, 1500, 0);
+                if (false) { }
+                else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
+                    rxbuf.resize(N);
+                    retval = 1;
+                    break;
+                }
+                else if (ret <= 0) {
+                    rxbuf.resize(N);
+                    closesocket(sockfd);
+                    readyState = CLOSED;
+                    fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+                    break;
+                }
+                else {
+                    retval = 1;
+                    rxbuf.resize(N + ret);
+                }
             }
         }
+        /*
         while (txbuf.size()) {
             int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
             if (false) { } // ??
@@ -242,10 +268,12 @@ class _RealWebSocket : public easywsclient::WebSocket
                 txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
             }
         }
+        */
         if (!txbuf.size() && readyState == CLOSING) {
             closesocket(sockfd);
             readyState = CLOSED;
         }
+        return retval;
     }
 
     // Callable must have signature: void(const std::string & message).
@@ -365,25 +393,25 @@ class _RealWebSocket : public easywsclient::WebSocket
         }
     }
 
-    void sendPing() {
+    int sendPing() {
         std::string empty;
-        sendData(wsheader_type::PING, empty.size(), empty.begin(), empty.end());
+        return sendData(wsheader_type::PING, empty.size(), empty.begin(), empty.end());
     }
 
-    void send(const std::string& message) {
-        sendData(wsheader_type::TEXT_FRAME, message.size(), message.begin(), message.end());
+    int send(const std::string& message) {
+        return sendData(wsheader_type::TEXT_FRAME, message.size(), message.begin(), message.end());
     }
 
-    void sendBinary(const std::string& message) {
-        sendData(wsheader_type::BINARY_FRAME, message.size(), message.begin(), message.end());
+    int sendBinary(const std::string& message) {
+        return sendData(wsheader_type::BINARY_FRAME, message.size(), message.begin(), message.end());
     }
 
-    void sendBinary(const std::vector<uint8_t>& message) {
-        sendData(wsheader_type::BINARY_FRAME, message.size(), message.begin(), message.end());
+    int sendBinary(const std::vector<uint8_t>& message) {
+        return sendData(wsheader_type::BINARY_FRAME, message.size(), message.begin(), message.end());
     }
 
     template<class Iterator>
-    void sendData(wsheader_type::opcode_type type, uint64_t message_size, Iterator message_begin, Iterator message_end) {
+    int sendData(wsheader_type::opcode_type type, uint64_t message_size, Iterator message_begin, Iterator message_end) {
         // TODO:
         // Masking key should (must) be derived from a high quality random
         // number generator, to mitigate attacks on non-WebSocket friendly
@@ -441,6 +469,23 @@ class _RealWebSocket : public easywsclient::WebSocket
                 txbuf[message_offset + i] ^= masking_key[i&0x3];
             }
         }
+        // New added code 
+        // Send the data synchronous (not asynchronous)
+        int sum = 0;
+        while (txbuf.size()){
+            int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+            if (ret <= 0) {
+                closesocket(sockfd);
+                readyState = CLOSED;
+                fputs(ret < 0 ? "sendData Connection error!\n" : "sendData Connection closed!\n", stderr);
+            }
+            else {
+                txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+                sum += ret;
+                //fprintf(stderr, "WebSock send[%d] bytes\n", ret);
+            }
+        }
+        return sum;
     }
 
     void close() {
@@ -449,6 +494,9 @@ class _RealWebSocket : public easywsclient::WebSocket
         uint8_t closeFrame[6] = {0x88, 0x80, 0x00, 0x00, 0x00, 0x00}; // last 4 bytes are a masking key
         std::vector<uint8_t> header(closeFrame, closeFrame+6);
         txbuf.insert(txbuf.end(), header.begin(), header.end());
+        int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+        txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+
     }
 
 };
