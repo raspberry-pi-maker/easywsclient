@@ -10,7 +10,7 @@ David Baird's easywsclient is a good code, but from my experience it needs some 
 - The sending function send does not need to be asynchronous.
 - Finally, the close function does not close the socket. It only sends a packet to the server to terminate the websocket. Therefore, if you clear the websocet locally before shutting down on the server, the socket does not close. Therefore, if the socket is not closed in the destructor, it is recommended to close it.
 
-<br>
+<br><br>
 
 Modification
 =====
@@ -34,7 +34,7 @@ return type modification:
 
 ```
 
-<br>
+<br><br>
 Add destructor for safe socket closing
 
 ```c++
@@ -51,7 +51,7 @@ int is_valid_fd(int fd)
 }
 
 ```
-<br>
+<br><br>
 send function send packet immediately, so in the poll function, select does not use write fd
 
 ```c++
@@ -88,7 +88,7 @@ while (txbuf.size()) {
 */
 
 ```
-<br>
+<br><br>
 
 The senddata function sends the packet immediately and return the sent bytes.
 ```c++
@@ -137,7 +137,7 @@ The senddata function sends the packet immediately and return the sent bytes.
 
 ```
 
-<br>
+<br><br>
 
 The close function immediately closes the socket after sending an close frame to the server.
 ```c++
