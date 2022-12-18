@@ -37,67 +37,133 @@ return type modification:
 
 
 
-Put together, the usage looks like this:
+Add destructor for safe socket closing
 
 ```c++
-#include "easywsclient.hpp"
-//#include "easywsclient.cpp" // <-- include only if you don't want compile separately
-
-int
-main()
+int is_valid_fd(int fd)
 {
-    ...
-    using easywsclient::WebSocket;
-    WebSocket::pointer ws = WebSocket::from_url("ws://localhost:8126/foo");
-    assert(ws);
-    while (true) {
-        ws->poll();
-        ws->send("hello");
-        ws->dispatch(handle_message);
-        // ...do more stuff...
-    }
-    ...
-    delete ws; // alternatively, use unique_ptr<> if you have C++11
-    return 0;
+    return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
 }
+
+......
+
+//in the destructor, if socket is opend , close it for preventing resource leakage
+~_RealWebSocket(){
+    if(is_valid_fd(sockfd)) closesocket(sockfd);
+}
+
 ```
 
-Example
-=======
+send function send packet immediately, so in the poll function, select does not use write fd
 
-    # Launch a test server:
-    node example-server.js
+```c++
+// Original 
+select(sockfd + 1, &rfds, &wfds, 0, timeout > 0 ? &tv : 0);
 
-    # Build and launch the client:
-    g++ -c easywsclient.cpp -o easywsclient.o
-    g++ -c example-client.cpp -o example-client.o
-    g++ example-client.o easywsclient.o -o example-client
-    ./example-client
+// Modified
+int ret = select(sockfd + 1, &rfds, NULL, 0, timeout > 0 ? &tv : 0);
+if(0 == ret){
+    return 0;   //No data to process 
+}
+else if(-1 == ret ){    //error
+    return -1;
+}
 
-    # ...or build and launch a C++11 client:
-    g++ -std=gnu++0x -c easywsclient.cpp -o easywsclient.o
-    g++ -std=gnu++0x -c example-client-cpp11.cpp -o example-client-cpp11.o
-    g++ example-client-cpp11.o easywsclient.o -o example-client-cpp11
-    ./example-client-cpp11
+// I don't need this code anymore.
+/*
+while (txbuf.size()) {
+    int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+    if (false) { } // ??
+    else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
+        break;
+    }
+    else if (ret <= 0) {
+        closesocket(sockfd);
+        readyState = CLOSED;
+        fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+        break;
+    }
+    else {
+        txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+    }
+}
+*/
 
-    # Expect the output from example-client:
-    Connected to: ws://localhost:8126/foo
-    >>> galaxy
-    >>> world
+```
 
-Threading
-=========
+The senddata function sends the packet immediately and return the sent bytes.
+```c++
+// Original 
+        ........
+        ........
+        // N.B. - txbuf will keep growing until it can be transmitted over the socket:
+        txbuf.insert(txbuf.end(), header.begin(), header.end());
+        txbuf.insert(txbuf.end(), message_begin, message_end);
+        if (useMask) {
+            size_t message_offset = txbuf.size() - message_size;
+            for (size_t i = 0; i != message_size; ++i) {
+                txbuf[message_offset + i] ^= masking_key[i&0x3];
+            }
+        }
 
-This library is not thread safe. The user must take care to use locks if
-accessing an instance of `WebSocket` from multiple threads. If you need
-a quick threading library and don't have Boost or something else already,
-I recommend [TinyThread++](http://tinythreadpp.bitsnbites.eu/).
+// Modified
+        ........
+        ........
+        // N.B. - txbuf will keep growing until it can be transmitted over the socket:
+        txbuf.insert(txbuf.end(), header.begin(), header.end());
+        txbuf.insert(txbuf.end(), message_begin, message_end);
+        if (useMask) {
+            size_t message_offset = txbuf.size() - message_size;
+            for (size_t i = 0; i != message_size; ++i) {
+                txbuf[message_offset + i] ^= masking_key[i&0x3];
+            }
+        }
+        // New added code 
+        // Send the data synchronous (not asynchronous)
+        int sum = 0;
+        while (txbuf.size()){
+            int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+            if (ret <= 0) {
+                closesocket(sockfd);
+                readyState = CLOSED;
+                fputs(ret < 0 ? "sendData Connection error!\n" : "sendData Connection closed!\n", stderr);
+            }
+            else {
+                txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+                sum += ret;
+                //fprintf(stderr, "WebSock send[%d] bytes\n", ret);
+            }
+        }
+        return sum;
 
-Future Work
-===========
+```
 
-(contributions appreciated!)
 
-* Parameterize the `pointer` type (especially for `shared_ptr`).
-* Support optional integration on top of an async (event-driven) library,
-  especially Asio.
+
+The close function immediately closes the socket after sending an close frame to the server.
+```c++
+// Original 
+   void close() {
+        if(readyState == CLOSING || readyState == CLOSED) { return; }
+        readyState = CLOSING;
+        uint8_t closeFrame[6] = {0x88, 0x80, 0x00, 0x00, 0x00, 0x00}; // last 4 bytes are a masking key
+        std::vector<uint8_t> header(closeFrame, closeFrame+6);
+        txbuf.insert(txbuf.end(), header.begin(), header.end());
+        int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+        txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+
+    }
+
+// Modified
+    void close() {
+        if(readyState == CLOSING || readyState == CLOSED) { return; }
+        readyState = CLOSING;
+        uint8_t closeFrame[6] = {0x88, 0x80, 0x00, 0x00, 0x00, 0x00}; // last 4 bytes are a masking key
+        std::vector<uint8_t> header(closeFrame, closeFrame+6);
+        txbuf.insert(txbuf.end(), header.begin(), header.end());
+        int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+        txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+
+    }
+
+```
