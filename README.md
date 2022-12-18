@@ -139,7 +139,7 @@ The senddata function sends the packet immediately and return the sent bytes.
 
 <br><br>
 
-The close function immediately closes the socket after sending an close frame to the server.
+The close function immediately closes the socket after sending a close frame to the server.
 ```c++
 // Original 
    void close() {
