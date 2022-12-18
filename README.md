@@ -1,7 +1,7 @@
 easywsclient
 ============
 
-It was copied from https://github.com/dhbaird/easywsclient.
+It was forked from https://github.com/dhbaird/easywsclient.
 Detailed introduction and usage can be found on the above site.
 
 David Baird's easywsclient is a good code, but from my experience it needs some improvement.
