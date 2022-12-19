@@ -7,8 +7,8 @@ Detailed introduction and usage can be found on the above site.
 David Baird's easywsclient is a good code, but from my experience it needs some improvement.
 
 - Functions such as send,sendBinary, sendBinary, sendData that send data are void types. It is recommended that these functions be returned as many bytes as sent.
-- The sending function send does not need to be asynchronous.
-- Finally, the close function does not close the socket. It only sends a packet to the server to terminate the websocket. Therefore, if you clear the websocet locally before shutting down on the server, the socket does not close. Therefore, if the socket is not closed in the destructor, it is recommended to close it.
+- The sending function does not need to be asynchronous.
+- Finally, in the original source code, the close function does not close the socket. It only sends a close frame packet to the server and wait for termination. Therefore, if you clear the websocet locally before shutting down on the server, the socket does not close. Therefore, if the socket is not closed in the destructor, it is recommended to close it.
 
 <br><br>
 
@@ -148,9 +148,6 @@ The close function immediately closes the socket after sending a close frame to 
         uint8_t closeFrame[6] = {0x88, 0x80, 0x00, 0x00, 0x00, 0x00}; // last 4 bytes are a masking key
         std::vector<uint8_t> header(closeFrame, closeFrame+6);
         txbuf.insert(txbuf.end(), header.begin(), header.end());
-        int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
-        txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
-
     }
 
 // Modified
